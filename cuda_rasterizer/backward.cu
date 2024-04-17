@@ -403,6 +403,7 @@ renderCUDA(
 	const uint32_t* __restrict__ point_list,
 	int W, int H,
 	const float* __restrict__ bg_color,
+	const bool pixelwisebg,
 	const float2* __restrict__ points_xy_image,
 	const float4* __restrict__ conic_opacity,
 	const float* __restrict__ colors,
@@ -553,10 +554,11 @@ renderCUDA(
 			// Account for fact that alpha also influences how much of
 			// the background color is added if nothing left to blend
 			float bg_dot_dpixel = 0;
-			for (int i = 0; i < C; i++)
-				bg_dot_dpixel += bg_color[i] * dL_dpixel[i];
+			for (int i = 0; i < C; i++) {
+				float bg_c = pixelwisebg ? bg_color[i * H * W + pix_id] : bg_color[i];
+				bg_dot_dpixel += bg_c * dL_dpixel[i];
+			}
 			dL_dalpha += (-T_final / (1.f - alpha)) * bg_dot_dpixel;
-
 
 			// Helpful reusable temporary variables
 			const float dL_dG = con_o.w * dL_dalpha;
@@ -651,6 +653,7 @@ void BACKWARD::render(
 	const uint32_t* point_list,
 	int W, int H,
 	const float* bg_color,
+	const bool pixelwisebg,
 	const float2* means2D,
 	const float4* conic_opacity,
 	const float* colors,
@@ -670,6 +673,7 @@ void BACKWARD::render(
 		point_list,
 		W, H,
 		bg_color,
+		pixelwisebg,
 		means2D,
 		conic_opacity,
 		colors,

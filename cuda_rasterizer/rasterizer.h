@@ -52,6 +52,7 @@ namespace CudaRasterizer
 			float* out_alpha,
 			float* out_depth,
 			int* radii = nullptr,
+			bool pixelwisebg = false,
 			bool debug = false);
 
 		static void backward(
@@ -85,6 +86,7 @@ namespace CudaRasterizer
 			float* dL_dsh,
 			float* dL_dscale,
 			float* dL_drot,
+			bool pixelwisebg,
 			bool debug);
 	};
 };

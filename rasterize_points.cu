@@ -58,6 +58,9 @@ RasterizeGaussiansCUDA(
   if (means3D.ndimension() != 2 || means3D.size(1) != 3) {
     AT_ERROR("means3D must have dimensions (num_points, 3)");
   }
+  if (background.ndimension() != 1 && background.ndimension() != 3) {
+	AT_ERROR("background must have dimensions (3,) or (H, W, 3)");
+  }
 
   // Set the device for the kernel launch based on the device of the input
   at::cuda::CUDAGuard device_guard(means3D.device());
@@ -116,6 +119,7 @@ RasterizeGaussiansCUDA(
 		out_alpha.contiguous().data<float>(),
 		out_depth.contiguous().data<float>(),
 		radii.contiguous().data<int>(),
+		background.ndimension() == 3,
 		debug);
   }
   return std::make_tuple(rendered, out_color, out_alpha, out_depth, radii, geomBuffer, binningBuffer, imgBuffer);
@@ -203,6 +207,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	  dL_dsh.contiguous().data<float>(),
 	  dL_dscales.contiguous().data<float>(),
 	  dL_drotations.contiguous().data<float>(),
+	  background.ndimension() == 3,
 	  debug);
   }
 
