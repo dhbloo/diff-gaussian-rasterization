@@ -59,21 +59,23 @@ RasterizeGaussiansCUDA(
     AT_ERROR("means3D must have dimensions (num_points, 3)");
   }
   if (background.ndimension() != 1 && background.ndimension() != 3) {
-	AT_ERROR("background must have dimensions (3,) or (H, W, 3)");
+	AT_ERROR("background must have dimensions (C,) or (H, W, C)");
   }
 
   // Set the device for the kernel launch based on the device of the input
   at::cuda::CUDAGuard device_guard(means3D.device());
-  
+
   const int P = means3D.size(0);
   const int H = image_height;
   const int W = image_width;
+  const int M = sh.size(0) != 0 ? sh.size(1) : 0;
+  const int C = M != 0 ? 3 : colors.size(1);
 
   auto int_opts = means3D.options().dtype(torch::kInt32);
   auto float_opts = means3D.options().dtype(torch::kFloat32);
   auto byte_opts = means3D.options().dtype(torch::kByte);
 
-  torch::Tensor out_color = torch::full({NUM_CHANNELS, H, W}, 0.0, float_opts);
+  torch::Tensor out_color = torch::full({C, H, W}, 0.0, float_opts);
   torch::Tensor out_alpha = torch::full({1, H, W}, 0.0, float_opts);
   torch::Tensor out_depth = torch::full({1, H, W}, 0.0, float_opts);
   torch::Tensor radii = torch::full({P}, 0, means3D.options().dtype(torch::kInt32));
@@ -88,19 +90,13 @@ RasterizeGaussiansCUDA(
   int rendered = 0;
   if(P != 0)
   {
-	  int M = 0;
-	  if(sh.size(0) != 0)
-	  {
-		M = sh.size(1);
-      }
-
 	  rendered = CudaRasterizer::Rasterizer::forward(
 	    geomFunc,
 		binningFunc,
 		imgFunc,
 	    P, degree, M,
 		background.contiguous().data<float>(),
-		W, H,
+		W, H, C,
 		means3D.contiguous().data<float>(),
 		sh.contiguous().data_ptr<float>(),
 		colors.contiguous().data<float>(), 
@@ -157,16 +153,12 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
   const int P = means3D.size(0);
   const int H = dL_dout_color.size(1);
   const int W = dL_dout_color.size(2);
-  
-  int M = 0;
-  if(sh.size(0) != 0)
-  {	
-	M = sh.size(1);
-  }
+  const int M = sh.size(0) != 0 ? sh.size(1) : 0;
+  const int C = M != 0 ? 3 : colors.size(1);
 
   torch::Tensor dL_dmeans3D = torch::zeros({P, 3}, means3D.options());
   torch::Tensor dL_dmeans2D = torch::zeros({P, 3}, means3D.options());
-  torch::Tensor dL_dcolors = torch::zeros({P, NUM_CHANNELS}, means3D.options());
+  torch::Tensor dL_dcolors = torch::zeros({P, C}, means3D.options());
   torch::Tensor dL_dconic = torch::zeros({P, 2, 2}, means3D.options());
   torch::Tensor dL_dopacity = torch::zeros({P, 1}, means3D.options());
   torch::Tensor dL_dcov3D = torch::zeros({P, 6}, means3D.options());
@@ -178,7 +170,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
   {  
 	  CudaRasterizer::Rasterizer::backward(P, degree, M, R,
 	  background.contiguous().data<float>(),
-	  W, H, 
+	  W, H, C,
 	  means3D.contiguous().data<float>(),
 	  sh.contiguous().data<float>(),
 	  colors.contiguous().data<float>(),

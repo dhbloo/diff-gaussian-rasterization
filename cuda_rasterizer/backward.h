@@ -24,7 +24,7 @@ namespace BACKWARD
 		const dim3 grid, dim3 block,
 		const uint2* ranges,
 		const uint32_t* point_list,
-		int W, int H,
+		int W, int H, int C,
 		const float* bg_color,
 		const bool pixelwisebg,
 		const float2* means2D,

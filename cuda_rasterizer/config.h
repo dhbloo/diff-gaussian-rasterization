@@ -12,8 +12,18 @@
 #ifndef CUDA_RASTERIZER_CONFIG_H_INCLUDED
 #define CUDA_RASTERIZER_CONFIG_H_INCLUDED
 
-#define NUM_CHANNELS 3 // Default 3, RGB
+#define NUM_CHANNELS_MAX 16
 #define BLOCK_X 16
 #define BLOCK_Y 16
+
+#define DECLARE_INT_TEMPLATE_ARG_LUT(fname)                               \
+    template <size_t... N>                                                \
+    static constexpr auto fname##_lut(std::index_sequence<N...> s)        \
+    {                                                                     \
+        return std::array<decltype(&fname<0>), s.size()>{(&fname<N>)...}; \
+    }
+
+#define MAKE_INT_TEMPLATE_ARG_LUT(fname, N) \
+    fname##_lut(std::make_index_sequence<N>{})
 
 #endif

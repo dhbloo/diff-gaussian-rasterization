@@ -13,6 +13,8 @@
 #include "auxiliary.h"
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#include <array>
+#include <type_traits>
 namespace cg = cooperative_groups;
 
 // Forward method for converting the input spherical harmonics
@@ -152,7 +154,6 @@ __device__ void computeCov3D(const glm::vec3 scale, float mod, const glm::vec4 r
 }
 
 // Perform initial steps for each Gaussian prior to rasterization.
-template<int C>
 __global__ void preprocessCUDA(int P, int D, int M,
 	const float* orig_points,
 	const glm::vec3* scales,
@@ -241,9 +242,9 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	if (colors_precomp == nullptr)
 	{
 		glm::vec3 result = computeColorFromSH(idx, D, M, (glm::vec3*)orig_points, *cam_pos, shs, clamped);
-		rgb[idx * C + 0] = result.x;
-		rgb[idx * C + 1] = result.y;
-		rgb[idx * C + 2] = result.z;
+		rgb[idx * 3 + 0] = result.x;
+		rgb[idx * 3 + 1] = result.y;
+		rgb[idx * 3 + 2] = result.z;
 	}
 
 	// Store some useful helper data for the next steps.
@@ -263,7 +264,7 @@ __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
 	const uint2* __restrict__ ranges,
 	const uint32_t* __restrict__ point_list,
-	int W, int H,
+	int W, int H, int channels,
 	const float2* __restrict__ points_xy_image,
 	const float* __restrict__ features,
 	const float* __restrict__ depths,
@@ -304,8 +305,16 @@ renderCUDA(
 	float T = 1.0f;
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
-	float C[CHANNELS] = { 0 };
-	float D = { 0 };
+	std::array<float, CHANNELS> C;
+	float D = 0;
+	if constexpr (CHANNELS == 0) {
+		// Set colors in global memory to zeros
+		for (int ch = 0; ch < channels; ch++)
+			out_color[ch * H * W + pix_id] = 0.0f;
+	} else {
+		for (int ch = 0; ch < CHANNELS; ch++)
+			C[ch] = 0.0f;
+	}
 
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
@@ -356,8 +365,14 @@ renderCUDA(
 			}
 
 			// Eq. (3) from 3D Gaussian splatting paper.
-			for (int ch = 0; ch < CHANNELS; ch++)
-				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
+			if constexpr (CHANNELS > 0) {
+				#pragma unroll
+				for (int ch = 0; ch < CHANNELS; ch++)
+					C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
+			} else {
+				for (int ch = 0; ch < channels; ch++)
+					out_color[ch * H * W + pix_id] += features[collected_id[j] * channels + ch] * alpha * T;
+			}
 			D += depths[collected_id[j]] * alpha * T;
 
 			T = test_T;
@@ -374,20 +389,30 @@ renderCUDA(
 	{
 		final_T[pix_id] = T;
 		n_contrib[pix_id] = last_contributor;
-		for (int ch = 0; ch < CHANNELS; ch++) {
-			float bg_c = pixelwisebg ? bg_color[ch * H * W + pix_id] : bg_color[ch];
-			out_color[ch * H * W + pix_id] = C[ch] + T * bg_c;
+		if constexpr (CHANNELS > 0) {
+			#pragma unroll
+			for (int ch = 0; ch < CHANNELS; ch++) {
+				float bg_c = pixelwisebg ? bg_color[ch * H * W + pix_id] : bg_color[ch];
+				out_color[ch * H * W + pix_id] = C[ch] + T * bg_c;
+			}
+		}
+		else {
+			for (int ch = 0; ch < channels; ch++) {
+				float bg_c = pixelwisebg ? bg_color[ch * H * W + pix_id] : bg_color[ch];
+				out_color[ch * H * W + pix_id] += T * bg_c;
+			}
 		}
 		out_depth[pix_id] = D;
 		out_alpha[pix_id] = 1 - T;
 	}
 }
 
+DECLARE_INT_TEMPLATE_ARG_LUT(renderCUDA)
 void FORWARD::render(
 	const dim3 grid, dim3 block,
 	const uint2* ranges,
 	const uint32_t* point_list,
-	int W, int H,
+	int W, int H, int C,
 	const float2* means2D,
 	const float* colors,
 	const float* depths,
@@ -400,10 +425,13 @@ void FORWARD::render(
 	float* out_alpha,
 	float* out_depth)
 {
-	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
+	static const auto renderCUDA_table = MAKE_INT_TEMPLATE_ARG_LUT(renderCUDA, NUM_CHANNELS_MAX + 1);
+	const int CHANNELS = C > NUM_CHANNELS_MAX ? 0 : C;
+	
+	renderCUDA_table[CHANNELS] << <grid, block >> > (
 		ranges,
 		point_list,
-		W, H,
+		W, H, C,
 		means2D,
 		colors,
 		depths,
@@ -443,7 +471,7 @@ void FORWARD::preprocess(int P, int D, int M,
 	uint32_t* tiles_touched,
 	bool prefiltered)
 {
-	preprocessCUDA<NUM_CHANNELS> << <(P + 255) / 256, 256 >> > (
+	preprocessCUDA << <(P + 255) / 256, 256 >> > (
 		P, D, M,
 		means3D,
 		scales,

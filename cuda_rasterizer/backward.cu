@@ -13,6 +13,8 @@
 #include "auxiliary.h"
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#include <array>
+#include <type_traits>
 namespace cg = cooperative_groups;
 
 // Backward pass for conversion of spherical harmonics to RGB for
@@ -343,7 +345,6 @@ __device__ void computeCov3D(int idx, const glm::vec3 scale, float mod, const gl
 // Backward pass of the preprocessing steps, except
 // for the covariance computation and inversion
 // (those are handled by a previous kernel call)
-template<int C>
 __global__ void preprocessCUDA(
 	int P, int D, int M,
 	const float3* means,
@@ -396,12 +397,12 @@ __global__ void preprocessCUDA(
 }
 
 // Backward version of the rendering procedure.
-template <uint32_t C>
+template <uint32_t CHANNELS>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
 	const uint2* __restrict__ ranges,
 	const uint32_t* __restrict__ point_list,
-	int W, int H,
+	int W, int H, int C,
 	const float* __restrict__ bg_color,
 	const bool pixelwisebg,
 	const float2* __restrict__ points_xy_image,
@@ -438,8 +439,18 @@ renderCUDA(
 	__shared__ int collected_id[BLOCK_SIZE];
 	__shared__ float2 collected_xy[BLOCK_SIZE];
 	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
-	__shared__ float collected_colors[C * BLOCK_SIZE];
 	__shared__ float collected_depths[BLOCK_SIZE];
+	__shared__ float* collected_colors;
+	__shared__ std::array<float, CHANNELS * BLOCK_SIZE> collected_colors_buf;
+
+	// Dynamic allocate memory for collected colors
+	if (block.thread_rank() == 0) {
+		if constexpr (CHANNELS == 0) {
+			collected_colors = new float[C * BLOCK_SIZE];
+		} else
+			collected_colors = collected_colors_buf.data();
+	}
+	block.sync();
 
 	// In the forward, we stored the final value for T, the
 	// product of all (1 - alpha) factors. 
@@ -451,22 +462,36 @@ renderCUDA(
 	uint32_t contributor = toDo;
 	const int last_contributor = inside ? n_contrib[pix_id] : 0;
 
-	float accum_rec[C] = { 0 };
-	float dL_dpixel[C];
+	std::array<float, CHANNELS * 3> local_color_buf;
+	float* global_color_buf;
+	float* accum_rec;
+	float* dL_dpixel;
+	float* last_color;
+	if constexpr (CHANNELS == 0) {
+		global_color_buf = new float[3 * C];
+		accum_rec = global_color_buf + C * 0;
+		dL_dpixel = global_color_buf + C * 1;
+		last_color = global_color_buf + C * 2;
+	} else {
+		accum_rec = local_color_buf.data() + C * 0;
+		dL_dpixel = local_color_buf.data() + C * 1;
+		last_color = local_color_buf.data() + C * 2;
+	}
+
 	float dL_daccum_alpha;
 	float dL_depth;
 	float accum_depth_rec = 0;
 	float accum_alpha_rec = 0;
+	float last_alpha = 0;
+	float last_depth = 0;
 	if (inside) {
-		for (int i = 0; i < C; i++)
+		for (int i = 0; i < C; i++) {
 			dL_dpixel[i] = dL_dpixels[i * H * W + pix_id];
+			accum_rec[i] = last_color[i] = 0;
+		}
 		dL_daccum_alpha = dL_dalphas[pix_id];
 		dL_depth = dL_ddepths[pix_id];
 	}
-
-	float last_alpha = 0;
-	float last_color[C] = { 0 };
-	float last_depth = 0;
 
 	// Gradient of pixel coordinate w.r.t. normalized 
 	// screen-space viewport corrdinates (-1 to 1)
@@ -580,6 +605,15 @@ renderCUDA(
 			atomicAdd(&(dL_dopacity[global_id]), G * dL_dalpha);
 		}
 	}
+
+	// Release dynamic memory
+	if constexpr (CHANNELS == 0) {
+		block.sync();
+		if (block.thread_rank() == 0) {
+			delete[] collected_colors;
+			delete[] global_color_buf;
+		}
+	}
 }
 
 void BACKWARD::preprocess(
@@ -627,7 +661,7 @@ void BACKWARD::preprocess(
 	// Propagate gradients for remaining steps: finish 3D mean gradients,
 	// propagate color gradients to SH (if desireD), propagate 3D covariance
 	// matrix gradients to scale and rotation.
-	preprocessCUDA<NUM_CHANNELS> << < (P + 255) / 256, 256 >> > (
+	preprocessCUDA << < (P + 255) / 256, 256 >> > (
 		P, D, M,
 		(float3*)means3D,
 		radii,
@@ -647,11 +681,12 @@ void BACKWARD::preprocess(
 		dL_drot);
 }
 
+DECLARE_INT_TEMPLATE_ARG_LUT(renderCUDA)
 void BACKWARD::render(
 	const dim3 grid, const dim3 block,
 	const uint2* ranges,
 	const uint32_t* point_list,
-	int W, int H,
+	int W, int H, int C,
 	const float* bg_color,
 	const bool pixelwisebg,
 	const float2* means2D,
@@ -668,10 +703,13 @@ void BACKWARD::render(
 	float* dL_dopacity,
 	float* dL_dcolors)
 {
-	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
+	static const auto renderCUDA_table = MAKE_INT_TEMPLATE_ARG_LUT(renderCUDA, NUM_CHANNELS_MAX + 1);
+	const int CHANNELS = C > NUM_CHANNELS_MAX ? 0 : C;
+
+	renderCUDA_table[CHANNELS] << <grid, block >> >(
 		ranges,
 		point_list,
-		W, H,
+		W, H, C,
 		bg_color,
 		pixelwisebg,
 		means2D,

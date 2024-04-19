@@ -34,7 +34,7 @@ namespace CudaRasterizer
 			std::function<char* (size_t)> imageBuffer,
 			const int P, int D, int M,
 			const float* background,
-			const int width, int height,
+			const int width, int height, int C,
 			const float* means3D,
 			const float* shs,
 			const float* colors_precomp,
@@ -58,7 +58,7 @@ namespace CudaRasterizer
 		static void backward(
 			const int P, int D, int M, int R,
 			const float* background,
-			const int width, int height,
+			const int width, int height, int C,
 			const float* means3D,
 			const float* shs,
 			const float* colors_precomp,
