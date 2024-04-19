@@ -65,6 +65,7 @@ class _RasterizeGaussians(torch.autograd.Function):
             opacities,
             scales,
             rotations,
+            raster_settings.bg_depth,
             raster_settings.scale_modifier,
             cov3Ds_precomp,
             raster_settings.viewmatrix,
@@ -113,6 +114,7 @@ class _RasterizeGaussians(torch.autograd.Function):
                 colors_precomp, 
                 scales, 
                 rotations, 
+                raster_settings.bg_depth,
                 raster_settings.scale_modifier, 
                 cov3Ds_precomp, 
                 raster_settings.viewmatrix, 
@@ -163,6 +165,7 @@ class GaussianRasterizationSettings(NamedTuple):
     tanfovx : float
     tanfovy : float
     bg : torch.Tensor
+    bg_depth: float
     scale_modifier : float
     viewmatrix : torch.Tensor
     projmatrix : torch.Tensor

@@ -404,6 +404,7 @@ renderCUDA(
 	const uint32_t* __restrict__ point_list,
 	int W, int H, int C,
 	const float* __restrict__ bg_color,
+	const float bg_depth,
 	const bool pixelwisebg,
 	const float2* __restrict__ points_xy_image,
 	const float4* __restrict__ conic_opacity,
@@ -583,6 +584,9 @@ renderCUDA(
 				float bg_c = pixelwisebg ? bg_color[i * H * W + pix_id] : bg_color[i];
 				bg_dot_dpixel += bg_c * dL_dpixel[i];
 			}
+			// Alpha also influences how much of the background depth
+			// is added to the total depth
+			bg_dot_dpixel += bg_depth * dL_depth;
 			dL_dalpha += (-T_final / (1.f - alpha)) * bg_dot_dpixel;
 
 			// Helpful reusable temporary variables
@@ -688,6 +692,7 @@ void BACKWARD::render(
 	const uint32_t* point_list,
 	int W, int H, int C,
 	const float* bg_color,
+	const float bg_depth,
 	const bool pixelwisebg,
 	const float2* means2D,
 	const float4* conic_opacity,
@@ -711,6 +716,7 @@ void BACKWARD::render(
 		point_list,
 		W, H, C,
 		bg_color,
+		bg_depth,
 		pixelwisebg,
 		means2D,
 		conic_opacity,

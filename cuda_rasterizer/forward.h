@@ -60,6 +60,7 @@ namespace FORWARD
 		float* final_T,
 		uint32_t* n_contrib,
 		const float* bg_color,
+		const float bg_depth,
 		const bool pixelwisebg,
 		float* out_color,
 		float* out_alpha,

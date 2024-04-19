@@ -272,6 +272,7 @@ renderCUDA(
 	float* __restrict__ final_T,
 	uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ bg_color,
+	const float bg_depth,
 	const bool pixelwisebg,
 	float* __restrict__ out_color,
 	float* __restrict__ out_alpha,
@@ -402,7 +403,7 @@ renderCUDA(
 				out_color[ch * H * W + pix_id] += T * bg_c;
 			}
 		}
-		out_depth[pix_id] = D;
+		out_depth[pix_id] = D + bg_depth * T;
 		out_alpha[pix_id] = 1 - T;
 	}
 }
@@ -420,6 +421,7 @@ void FORWARD::render(
 	float* final_T,
 	uint32_t* n_contrib,
 	const float* bg_color,
+	const float bg_depth,
 	const bool pixelwisebg,
 	float* out_color,
 	float* out_alpha,
@@ -439,6 +441,7 @@ void FORWARD::render(
 		final_T,
 		n_contrib,
 		bg_color,
+		bg_depth,
 		pixelwisebg,
 		out_color,
 		out_alpha,
