@@ -370,6 +370,7 @@ void CudaRasterizer::Rasterizer::backward(
 	const float* dL_alpha,
 	const float* dL_depth,
 	float* dL_dmean2D,
+	float* dL_dmean2D_abs,
 	float* dL_dconic,
 	float* dL_dopacity,
 	float* dL_dcolor,
@@ -420,6 +421,7 @@ void CudaRasterizer::Rasterizer::backward(
 		dL_alpha,
 		dL_depth,
 		(float3*)dL_dmean2D,
+		(float2*)dL_dmean2D_abs,
 		(float4*)dL_dconic,
 		dL_dopacity,
 		dL_dcolor), debug)
