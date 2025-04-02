@@ -18,6 +18,60 @@ def cpu_deep_copy_tuple(input_tuple):
     copied_tensors = [item.cpu().clone() if isinstance(item, torch.Tensor) else item for item in input_tuple]
     return tuple(copied_tensors)
 
+def count_touched_pixels(
+    mask_image,
+    means3D,
+    means2D,
+    dc,
+    shs,
+    colors_precomp,
+    opacities,
+    scales,
+    rotations,
+    cov3Ds_precomp,
+    raster_settings,
+):
+    if dc is None:
+        dc = torch.Tensor([])
+    if shs is None:
+        shs = torch.Tensor([])
+    if colors_precomp is None:
+        colors_precomp = torch.Tensor([])
+
+    if scales is None:
+        scales = torch.Tensor([])
+    if rotations is None:
+        rotations = torch.Tensor([])
+    if cov3Ds_precomp is None:
+        cov3Ds_precomp = torch.Tensor([])
+        
+    args = (
+        mask_image, 
+        means3D,
+        means2D,
+        colors_precomp,
+        opacities,
+        scales,
+        rotations,
+        raster_settings.scale_modifier,
+        cov3Ds_precomp,
+        raster_settings.viewmatrix,
+        raster_settings.projmatrix,
+        raster_settings.tanfovx,
+        raster_settings.tanfovy,
+        raster_settings.image_height,
+        raster_settings.image_width,
+        dc,
+        shs,
+        raster_settings.sh_degree,
+        raster_settings.campos,
+        raster_settings.prefiltered,
+        raster_settings.antialiasing,
+        raster_settings.debug
+    )
+    num_rendered, num_touched_pixels = _C.count_touched_pixels(*args)
+    return num_touched_pixels
+
 def rasterize_gaussians(
     means3D,
     means2D,
@@ -64,6 +118,7 @@ class _RasterizeGaussians(torch.autograd.Function):
         args = (
             raster_settings.bg, 
             means3D,
+            means2D,
             colors_precomp,
             opacities,
             scales,
@@ -101,7 +156,7 @@ class _RasterizeGaussians(torch.autograd.Function):
         ctx.raster_settings = raster_settings
         ctx.num_rendered = num_rendered
         ctx.num_buckets = num_buckets
-        ctx.save_for_backward(colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, dc, sh, opacities, geomBuffer, binningBuffer, imgBuffer, sampleBuffer)
+        ctx.save_for_backward(colors_precomp, means3D, means2D, scales, rotations, cov3Ds_precomp, radii, dc, sh, opacities, geomBuffer, binningBuffer, imgBuffer, sampleBuffer)
         return color, radii, invdepths
 
     @staticmethod
@@ -111,11 +166,12 @@ class _RasterizeGaussians(torch.autograd.Function):
         num_rendered = ctx.num_rendered
         num_buckets = ctx.num_buckets
         raster_settings = ctx.raster_settings
-        colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, dc, sh, opacities, geomBuffer, binningBuffer, imgBuffer, sampleBuffer = ctx.saved_tensors
+        colors_precomp, means3D, means2D, scales, rotations, cov3Ds_precomp, radii, dc, sh, opacities, geomBuffer, binningBuffer, imgBuffer, sampleBuffer = ctx.saved_tensors
 
         # Restructure args as C++ method expects them
         args = (raster_settings.bg,
                 means3D, 
+                means2D, 
                 radii, 
                 colors_precomp, 
                 opacities,

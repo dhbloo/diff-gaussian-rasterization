@@ -53,6 +53,7 @@ std::tuple<int, int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
 RasterizeGaussiansCUDA(
 	const torch::Tensor& background,
 	const torch::Tensor& means3D,
+	const torch::Tensor& means2D,
     const torch::Tensor& colors,
     const torch::Tensor& opacity,
 	const torch::Tensor& scales,
@@ -118,6 +119,7 @@ RasterizeGaussiansCUDA(
 		background.contiguous().data<float>(),
 		W, H,
 		means3D.contiguous().data<float>(),
+		means2D.contiguous().data<float>(),
 		dc.contiguous().data_ptr<float>(),
 		sh.contiguous().data_ptr<float>(),
 		colors.contiguous().data<float>(), 
@@ -148,6 +150,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
  RasterizeGaussiansBackwardCUDA(
  	const torch::Tensor& background,
 	const torch::Tensor& means3D,
+	const torch::Tensor& means2D,
 	const torch::Tensor& radii,
     const torch::Tensor& colors,
 	const torch::Tensor& opacities,
@@ -185,7 +188,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
   }
 
   torch::Tensor dL_dmeans3D = torch::zeros({P, 3}, means3D.options());
-  torch::Tensor dL_dmeans2D = torch::zeros({P, 3}, means3D.options());
+  torch::Tensor dL_dmeans2D = torch::zeros({P, 2}, means3D.options());
   torch::Tensor dL_dcolors = torch::zeros({P, NUM_CHANNELS_3DGS}, means3D.options());
   torch::Tensor dL_dinvdepths = torch::zeros({P, 1}, means3D.options());
   torch::Tensor dL_dconic = torch::zeros({P, 2, 2}, means3D.options());
@@ -202,6 +205,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	  background.contiguous().data<float>(),
 	  W, H, 
 	  means3D.contiguous().data<float>(),
+	  means2D.contiguous().data<float>(),
 	  dc.contiguous().data<float>(),
 	  sh.contiguous().data<float>(),
 	  colors.contiguous().data<float>(),
@@ -238,6 +242,93 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
   }
 
   return std::make_tuple(dL_dmeans2D, dL_dcolors, dL_dopacity, dL_dmeans3D, dL_dcov3D, dL_ddc, dL_dsh, dL_dscales, dL_drotations);
+}
+
+
+std::tuple<int, torch::Tensor>
+countTouchedPixelsCUDA(
+	const torch::Tensor& mask_image,
+	const torch::Tensor& means3D,
+	const torch::Tensor& means2D,
+    const torch::Tensor& colors,
+    const torch::Tensor& opacity,
+	const torch::Tensor& scales,
+	const torch::Tensor& rotations,
+	const float scale_modifier,
+	const torch::Tensor& cov3D_precomp,
+	const torch::Tensor& viewmatrix,
+	const torch::Tensor& projmatrix,
+	const float tan_fovx, 
+	const float tan_fovy,
+    const int image_height,
+    const int image_width,
+	const torch::Tensor& dc,
+	const torch::Tensor& sh,
+	const int degree,
+	const torch::Tensor& campos,
+	const bool prefiltered,
+	const bool antialiasing,
+	const bool debug)
+{
+  if (means3D.ndimension() != 2 || means3D.size(1) != 3) {
+    AT_ERROR("means3D must have dimensions (num_points, 3)");
+  }
+  
+  const int P = means3D.size(0);
+  const int H = image_height;
+  const int W = image_width;
+
+  auto int_opts = means3D.options().dtype(torch::kInt32);
+  auto float_opts = means3D.options().dtype(torch::kFloat32);
+
+  torch::Tensor out_num_pixels_touched = torch::full({P}, 0, means3D.options().dtype(torch::kInt32));
+  
+  torch::Device device(torch::kCUDA);
+  torch::TensorOptions options(torch::kByte);
+  torch::Tensor geomBuffer = torch::empty({0}, options.device(device));
+  torch::Tensor binningBuffer = torch::empty({0}, options.device(device));
+  torch::Tensor imgBuffer = torch::empty({0}, options.device(device));
+  std::function<char*(size_t)> geomFunc = resizeFunctional(geomBuffer);
+  std::function<char*(size_t)> binningFunc = resizeFunctional(binningBuffer);
+  std::function<char*(size_t)> imgFunc = resizeFunctional(imgBuffer);
+  
+  int rendered = 0;
+  if(P != 0)
+  {
+	  int M = 0;
+	  if(sh.size(0) != 0)
+	  {
+		M = sh.size(1);
+      }
+
+	  rendered = CudaRasterizer::Rasterizer::countTouchedPixels(
+	    geomFunc,
+		binningFunc,
+		imgFunc,
+	    P, degree, M,
+		mask_image.contiguous().data<float>(),
+		W, H,
+		means3D.contiguous().data<float>(),
+		means2D.contiguous().data<float>(),
+		dc.contiguous().data_ptr<float>(),
+		sh.contiguous().data_ptr<float>(),
+		colors.contiguous().data<float>(), 
+		opacity.contiguous().data<float>(), 
+		scales.contiguous().data_ptr<float>(),
+		scale_modifier,
+		rotations.contiguous().data_ptr<float>(),
+		cov3D_precomp.contiguous().data<float>(), 
+		viewmatrix.contiguous().data<float>(), 
+		projmatrix.contiguous().data<float>(),
+		campos.contiguous().data<float>(),
+		tan_fovx,
+		tan_fovy,
+		prefiltered,
+		out_num_pixels_touched.contiguous().data_ptr<int>(),
+		antialiasing,
+		debug);
+  }
+  return std::make_tuple(rendered, out_num_pixels_touched);
 }
 
 torch::Tensor markVisible(

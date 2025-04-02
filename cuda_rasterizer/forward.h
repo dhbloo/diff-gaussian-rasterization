@@ -68,6 +68,16 @@ namespace FORWARD
 		float* out_color,
 		float* depths,
 		float* depth);
+
+	void countTouchedPixels(
+		const dim3 grid, dim3 block,
+		const uint2* ranges,
+		const uint32_t* point_list,
+		int W, int H,
+		const float2* means2D,
+		const float4* conic_opacity,
+		const float* mask_image,
+		int* num_pixels_touched);
 }
 
 

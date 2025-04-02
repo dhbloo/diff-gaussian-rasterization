@@ -433,6 +433,82 @@ renderCUDA(
 }
 
 
+// Find how many pixels in the mask do all the gaussians touched
+__global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
+countTouchedPixelsCUDA(
+	const uint2* __restrict__ ranges,
+	const uint32_t* __restrict__ point_list,
+	int W, int H,
+	const float2* __restrict__ points_xy_image,
+	const float4* __restrict__ conic_opacity,
+	const float* __restrict__ mask_image,
+	int* __restrict__ num_pixels_touched)
+{
+	// Identify current tile and associated min/max pixel range.
+	auto block = cg::this_thread_block();
+	uint32_t horizontal_blocks = (W + BLOCK_X - 1) / BLOCK_X;
+	uint2 pix_min = { block.group_index().x * BLOCK_X, block.group_index().y * BLOCK_Y };
+	uint2 pix_max = { min(pix_min.x + BLOCK_X, W), min(pix_min.y + BLOCK_Y , H) };
+	uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };
+	uint32_t pix_id = W * pix.y + pix.x;
+	float2 pixf = { (float)pix.x, (float)pix.y };
+
+	// Check if this thread is associated with a valid pixel or outside.
+	bool inside = pix.x < W && pix.y < H;
+	// Check if this pixel is in the mask
+	bool inmask = inside && mask_image[pix_id] > 0.0f;
+	// Done threads can help with fetching, but don't rasterize
+	bool done = !inmask;
+
+	// Load start/end range of IDs to process in bit sorted list.
+	uint32_t tile_id = block.group_index().y * horizontal_blocks + block.group_index().x;
+	uint2 range = ranges[tile_id];
+	const int rounds = ((range.y - range.x + BLOCK_SIZE - 1) / BLOCK_SIZE);
+	int toDo = range.y - range.x;
+	
+	// Allocate storage for batches of collectively fetched data.
+	__shared__ int collected_id[BLOCK_SIZE];
+	__shared__ float2 collected_xy[BLOCK_SIZE];
+	__shared__ float4 collected_conic_opacity[BLOCK_SIZE];
+
+	// Iterate over batches until all done or range is complete
+	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
+	{
+		// End if entire block votes that it is done rasterizing
+		int num_done = __syncthreads_count(done);
+		if (num_done == BLOCK_SIZE)
+			break;
+
+		// Collectively fetch per-Gaussian data from global to shared
+		int progress = i * BLOCK_SIZE + block.thread_rank();
+		if (range.x + progress < range.y)
+		{
+			int coll_id = point_list[range.x + progress];
+			collected_id[block.thread_rank()] = coll_id;
+			collected_xy[block.thread_rank()] = points_xy_image[coll_id];
+			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
+		}
+		block.sync();
+
+		// Iterate over current batch
+		for (int j = 0; !done && j < min(BLOCK_SIZE, toDo); j++)
+		{
+			// Resample using conic matrix (cf. "Surface 
+			// Splatting" by Zwicker et al., 2001)
+			float2 xy = collected_xy[j];
+			float2 d = { xy.x - pixf.x, xy.y - pixf.y };
+			float4 con_o = collected_conic_opacity[j];
+			float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
+			if (power > 0.0f)
+				continue;
+
+			// Add 1 to the points mark for this Gaussian
+			atomicAdd(&num_pixels_touched[collected_id[j]], 1);
+		}
+	}
+}
+
+
 void FORWARD::render(
 	const dim3 grid, dim3 block,
 	const uint2* ranges,
@@ -467,6 +543,26 @@ void FORWARD::render(
 		out_color,
 		depths,
 		depth);
+}
+
+void FORWARD::countTouchedPixels(
+	const dim3 grid, dim3 block,
+	const uint2* ranges,
+	const uint32_t* point_list,
+	int W, int H,
+	const float2* means2D,
+	const float4* conic_opacity,
+	const float* mask_image,
+	int* num_pixels_touched)
+{
+	countTouchedPixelsCUDA << <grid, block >> > (
+		ranges,
+		point_list,
+		W, H,
+		means2D,
+		conic_opacity,
+		mask_image,
+		num_pixels_touched);
 }
 
 void FORWARD::preprocess(int P, int D, int M,
