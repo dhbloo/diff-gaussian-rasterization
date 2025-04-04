@@ -11,6 +11,7 @@
 
 #include <math.h>
 #include <torch/extension.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <cstdio>
 #include <sstream>
 #include <iostream>
@@ -77,6 +78,9 @@ RasterizeGaussiansCUDA(
   if (means3D.ndimension() != 2 || means3D.size(1) != 3) {
     AT_ERROR("means3D must have dimensions (num_points, 3)");
   }
+
+  // Set the device for the kernel launch based on the device of the input
+  at::cuda::CUDAGuard device_guard(means3D.device());
   
   const int P = means3D.size(0);
   const int H = image_height;
@@ -84,18 +88,17 @@ RasterizeGaussiansCUDA(
 
   auto int_opts = means3D.options().dtype(torch::kInt32);
   auto float_opts = means3D.options().dtype(torch::kFloat32);
+  auto byte_opts = means3D.options().dtype(torch::kByte);
 
   torch::Tensor out_color = torch::full({NUM_CHANNELS_3DGS, H, W}, 0.0, float_opts);
   torch::Tensor out_alpha = torch::full({1, H, W}, 0.0, float_opts);
   torch::Tensor out_invdepth = torch::full({1, H, W}, 0.0, float_opts);
   torch::Tensor radii = torch::full({P}, 0, means3D.options().dtype(torch::kInt32));
   
-  torch::Device device(torch::kCUDA);
-  torch::TensorOptions options(torch::kByte);
-  torch::Tensor geomBuffer = torch::empty({0}, options.device(device));
-  torch::Tensor binningBuffer = torch::empty({0}, options.device(device));
-  torch::Tensor imgBuffer = torch::empty({0}, options.device(device));
-  torch::Tensor sampleBuffer = torch::empty({0}, options.device(device));
+  torch::Tensor geomBuffer = torch::empty({0}, byte_opts);
+  torch::Tensor binningBuffer = torch::empty({0}, byte_opts);
+  torch::Tensor imgBuffer = torch::empty({0}, byte_opts);
+  torch::Tensor sampleBuffer = torch::empty({0}, byte_opts);
   std::function<char*(size_t)> geomFunc = resizeFunctional(geomBuffer);
   std::function<char*(size_t)> binningFunc = resizeFunctional(binningBuffer);
   std::function<char*(size_t)> imgFunc = resizeFunctional(imgBuffer);
@@ -180,6 +183,9 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	const bool antialiasing,
 	const bool debug) 
 {
+  // Set the device for the kernel launch based on the device of the input
+  at::cuda::CUDAGuard device_guard(means3D.device());
+
   const int P = means3D.size(0);
   const int H = dL_dout_color.size(1);
   const int W = dL_dout_color.size(2);
@@ -277,6 +283,9 @@ countTouchedPixelsCUDA(
   if (means3D.ndimension() != 2 || means3D.size(1) != 3) {
     AT_ERROR("means3D must have dimensions (num_points, 3)");
   }
+
+  // Set the device for the kernel launch based on the device of the input
+  at::cuda::CUDAGuard device_guard(means3D.device());
   
   const int P = means3D.size(0);
   const int H = image_height;
@@ -340,6 +349,9 @@ torch::Tensor markVisible(
 		torch::Tensor& viewmatrix,
 		torch::Tensor& projmatrix)
 { 
+  // Set the device for the kernel launch based on the device of the input
+  at::cuda::CUDAGuard device_guard(means3D.device());
+
   const int P = means3D.size(0);
   
   torch::Tensor present = torch::full({P}, false, means3D.options().dtype(at::kBool));
@@ -369,6 +381,9 @@ void adamUpdate(
 	const uint32_t N,
 	const uint32_t M
 ){
+	// Set the device for the kernel launch based on the device of the input
+	at::cuda::CUDAGuard device_guard(param.device());
+
 	ADAM::adamUpdate(
 		param.contiguous().data<float>(),
 		param_grad.contiguous().data<float>(),
