@@ -284,7 +284,8 @@ renderCUDA(
 	const uint2* __restrict__ ranges,
 	const uint32_t* __restrict__ point_list,
 	const uint32_t* __restrict__ per_tile_bucket_offset, uint32_t* __restrict__ bucket_to_tile,
-	float* __restrict__ sampled_T, float* __restrict__ sampled_ar, float* __restrict__ sampled_ard,
+	float* __restrict__ sampled_T, float* __restrict__ sampled_ar,
+	float* __restrict__ sampled_ara, float* __restrict__ sampled_ard,
 	int W, int H,
 	const float2* __restrict__ points_xy_image,
 	const float* __restrict__ features,
@@ -294,6 +295,7 @@ renderCUDA(
 	uint32_t* __restrict__ max_contrib,
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color,
+	float* __restrict__ out_alpha,
 	const float* __restrict__ depths,
 	float* __restrict__ invdepth)
 {
@@ -338,6 +340,7 @@ renderCUDA(
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
 	float C[CHANNELS] = { 0 };
+	float accum_alpha = 0.0f;
 	float expected_invdepth = 0.0f;
 
 	// Iterate over batches until all done or range is complete
@@ -368,6 +371,7 @@ renderCUDA(
 				for (int ch = 0; ch < CHANNELS; ++ch) {
 					sampled_ar[(bbm * BLOCK_SIZE * CHANNELS) + ch * BLOCK_SIZE + block.thread_rank()] = C[ch];
 				}
+				sampled_ara[(bbm * BLOCK_SIZE) + block.thread_rank()] = accum_alpha;
 				sampled_ard[(bbm * BLOCK_SIZE) + block.thread_rank()] = expected_invdepth;
 				++bbm;
 			}
@@ -402,6 +406,7 @@ renderCUDA(
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
 
+			accum_alpha += alpha * T;
 			expected_invdepth += (1.f / depths[collected_id[j]]) * alpha * T;
 
 			T = test_T;
@@ -420,6 +425,7 @@ renderCUDA(
 		n_contrib[pix_id] = last_contributor;
 		for (int ch = 0; ch < CHANNELS; ch++)
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
+		out_alpha[pix_id] = accum_alpha;
 		invdepth[pix_id] = expected_invdepth;
 	}
 
@@ -514,7 +520,7 @@ void FORWARD::render(
 	const uint2* ranges,
 	const uint32_t* point_list,
 	const uint32_t* per_tile_bucket_offset, uint32_t* bucket_to_tile,
-	float* sampled_T, float* sampled_ar, float* sampled_ard,
+	float* sampled_T, float* sampled_ar, float* sampled_ara, float* sampled_ard,
 	int W, int H,
 	const float2* means2D,
 	const float* colors,
@@ -524,6 +530,7 @@ void FORWARD::render(
 	uint32_t* max_contrib,
 	const float* bg_color,
 	float* out_color,
+	float* out_alpha,
 	float* depths,
 	float* depth)
 {
@@ -531,7 +538,7 @@ void FORWARD::render(
 		ranges,
 		point_list,
 		per_tile_bucket_offset, bucket_to_tile,
-		sampled_T, sampled_ar, sampled_ard,
+		sampled_T, sampled_ar, sampled_ara, sampled_ard,
 		W, H,
 		means2D,
 		colors,
@@ -541,6 +548,7 @@ void FORWARD::render(
 		max_contrib,
 		bg_color,
 		out_color,
+		out_alpha,
 		depths,
 		depth);
 }

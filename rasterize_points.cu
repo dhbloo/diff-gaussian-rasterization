@@ -49,7 +49,7 @@ std::function<float*(size_t N)> resizeFloatFunctional(torch::Tensor& t) {
     return lambda;
 }
 
-std::tuple<int, int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+std::tuple<int, int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGaussiansCUDA(
 	const torch::Tensor& background,
 	const torch::Tensor& means3D,
@@ -86,6 +86,7 @@ RasterizeGaussiansCUDA(
   auto float_opts = means3D.options().dtype(torch::kFloat32);
 
   torch::Tensor out_color = torch::full({NUM_CHANNELS_3DGS, H, W}, 0.0, float_opts);
+  torch::Tensor out_alpha = torch::full({1, H, W}, 0.0, float_opts);
   torch::Tensor out_invdepth = torch::full({1, H, W}, 0.0, float_opts);
   torch::Tensor radii = torch::full({P}, 0, means3D.options().dtype(torch::kInt32));
   
@@ -135,6 +136,7 @@ RasterizeGaussiansCUDA(
 		tan_fovy,
 		prefiltered,
 		out_color.contiguous().data<float>(),
+		out_alpha.contiguous().data<float>(),
 		out_invdepth.contiguous().data<float>(),
 		antialiasing,
 		radii.contiguous().data<int>(),
@@ -143,7 +145,7 @@ RasterizeGaussiansCUDA(
 		rendered = std::get<0>(tup);
 		num_buckets = std::get<1>(tup);
   }
-  return std::make_tuple(rendered, num_buckets, out_color, out_invdepth, radii, geomBuffer, binningBuffer, imgBuffer, sampleBuffer);
+  return std::make_tuple(rendered, num_buckets, out_color, out_invdepth, out_alpha, radii, geomBuffer, binningBuffer, imgBuffer, sampleBuffer);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
@@ -165,6 +167,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
     const torch::Tensor& dL_dout_color,
 	const torch::Tensor& dc,
 	const torch::Tensor& sh,
+	const torch::Tensor& dL_dout_alpha,
 	const torch::Tensor& dL_dout_invdepth,
 	const int degree,
 	const torch::Tensor& campos,
@@ -225,6 +228,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
 	  reinterpret_cast<char*>(imageBuffer.contiguous().data_ptr()),
 	  reinterpret_cast<char*>(sampleBuffer.contiguous().data_ptr()),
 	  dL_dout_color.contiguous().data<float>(),
+	  dL_dout_alpha.contiguous().data<float>(),
 	  dL_dout_invdepth.contiguous().data<float>(),
 	  dL_dmeans2D.contiguous().data<float>(),
 	  dL_dconic.contiguous().data<float>(),  

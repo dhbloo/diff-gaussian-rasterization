@@ -82,6 +82,7 @@ namespace CudaRasterizer
 		uint32_t *bucket_to_tile;
 		float *T;
 		float *ar;
+		float *ara;
 		float *ard;
 		static SampleState fromChunk(char*& chunk, size_t C);
 	};

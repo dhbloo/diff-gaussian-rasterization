@@ -289,6 +289,7 @@ CudaRasterizer::SampleState CudaRasterizer::SampleState::fromChunk(char *& chunk
 	obtain(chunk, sample.bucket_to_tile, C * BLOCK_SIZE, 128);
 	obtain(chunk, sample.T, C * BLOCK_SIZE, 128);
 	obtain(chunk, sample.ar, NUM_CHANNELS_3DGS * C * BLOCK_SIZE, 128);
+	obtain(chunk, sample.ara, C * BLOCK_SIZE, 128);
 	obtain(chunk, sample.ard, C * BLOCK_SIZE, 128);
 	return sample;
 }
@@ -491,7 +492,8 @@ std::tuple<int,int> CudaRasterizer::Rasterizer::forward(
 	const float tan_fovx, float tan_fovy,
 	const bool prefiltered,
 	float* out_color,
-	float* invdepth,
+	float* out_alpha,
+	float* out_invdepth,
 	bool antialiasing,
 	int* radii,
 	bool debug)
@@ -616,7 +618,7 @@ std::tuple<int,int> CudaRasterizer::Rasterizer::forward(
 		imgState.ranges,
 		binningState.point_list,
 		imgState.bucket_offsets, sampleState.bucket_to_tile,
-		sampleState.T, sampleState.ar, sampleState.ard,
+		sampleState.T, sampleState.ar, sampleState.ara, sampleState.ard,
 		width, height,
 		(float2*)means2D,
 		feature_ptr,
@@ -626,11 +628,12 @@ std::tuple<int,int> CudaRasterizer::Rasterizer::forward(
 		imgState.max_contrib,
 		background,
 		out_color,
+		out_alpha,
 		geomState.depths,
-		invdepth), debug)
+		out_invdepth), debug)
 
 	CHECK_CUDA(cudaMemcpy(imgState.pixel_colors, out_color, sizeof(float) * width * height * NUM_CHANNELS_3DGS, cudaMemcpyDeviceToDevice), debug);
-	CHECK_CUDA(cudaMemcpy(imgState.pixel_invDepths, invdepth, sizeof(float) * width * height, cudaMemcpyDeviceToDevice), debug);
+	CHECK_CUDA(cudaMemcpy(imgState.pixel_invDepths, out_invdepth, sizeof(float) * width * height, cudaMemcpyDeviceToDevice), debug);
 	return std::make_tuple(num_rendered, bucket_sum);
 }
 
@@ -660,6 +663,7 @@ void CudaRasterizer::Rasterizer::backward(
 	char* img_buffer,
 	char* sample_buffer,
 	const float* dL_dpix,
+	const float* dL_dalpha,
 	const float* dL_invdepths,
 	float* dL_dmean2D,
 	float* dL_dconic,
@@ -705,6 +709,7 @@ void CudaRasterizer::Rasterizer::backward(
 		sampleState.bucket_to_tile,
 		sampleState.T,
 		sampleState.ar,
+		sampleState.ara,
 		sampleState.ard,
 		background,
 		(float2*)means2D,
@@ -717,6 +722,7 @@ void CudaRasterizer::Rasterizer::backward(
 		imgState.pixel_colors,
 		imgState.pixel_invDepths,
 		dL_dpix,
+		dL_dalpha,
 		dL_invdepths,
 		(float2*)dL_dmean2D,
 		(float4*)dL_dconic,
