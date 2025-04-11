@@ -93,7 +93,7 @@ RasterizeGaussiansCUDA(
   torch::Tensor out_color = torch::full({NUM_CHANNELS_3DGS, H, W}, 0.0, float_opts);
   torch::Tensor out_alpha = torch::full({1, H, W}, 0.0, float_opts);
   torch::Tensor out_invdepth = torch::full({1, H, W}, 0.0, float_opts);
-  torch::Tensor radii = torch::full({P}, 0, means3D.options().dtype(torch::kInt32));
+  torch::Tensor radii = torch::full({P}, 0, int_opts);
   
   torch::Tensor geomBuffer = torch::empty({0}, byte_opts);
   torch::Tensor binningBuffer = torch::empty({0}, byte_opts);
@@ -208,7 +208,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
   torch::Tensor dL_dscales = torch::zeros({P, 3}, means3D.options());
   torch::Tensor dL_drotations = torch::zeros({P, 4}, means3D.options()); // quats {P, 3, 3}
   
-  if(P != 0)
+  if(P != 0 && B != 0)
   {  
 	  CudaRasterizer::Rasterizer::backward(P, degree, M, R, B,
 	  background.contiguous().data<float>(),

@@ -157,6 +157,11 @@ class _RasterizeGaussians(torch.autograd.Function):
         ctx.num_rendered = num_rendered
         ctx.num_buckets = num_buckets
         ctx.save_for_backward(colors_precomp, means3D, means2D, scales, rotations, cov3Ds_precomp, radii, dc, sh, opacities, geomBuffer, binningBuffer, imgBuffer, sampleBuffer)
+
+        if raster_settings.check:
+            if num_rendered == 0 or num_buckets == 0:
+                raise RuntimeError(f"No gaussian is rendered. Check input data.")
+            
         return color, radii, invdepths, alphas
 
     @staticmethod
@@ -240,6 +245,7 @@ class GaussianRasterizationSettings(NamedTuple):
     prefiltered : bool
     debug : bool
     antialiasing : bool
+    check : bool
 
 class GaussianRasterizer(nn.Module):
     def __init__(self, raster_settings):
